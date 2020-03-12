@@ -1,0 +1,169 @@
+---
+title: "fused_matrix_visualisation"
+author: "Hani Jieun Kim"
+date: "11/03/2020"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Fused matrix visualisation
+
+The script reproduces the UMAP visualisation of the fused matrix in Figure 2c-e in the main manuscript. It is shown in Figures \@ref(fig:plot_full), \@ref(fig:plot_modality), and \@ref(fig:plot_markers).
+```{r load, echo=FALSE}
+suppressMessages(library(uwot))
+suppressMessages(library(ggplot2))
+suppressMessages(library(ggthemes))
+suppressMessages(library(tidyverse))
+suppressMessages(library(preprocessCore))
+suppressMessages(library(SingleCellExperiment))
+
+load("fusedMatrix_CiteFuse.RData", verbose=T)
+load("cluster_labels.RData", verbose = T)
+load("annotation_colors.RData", verbose=T)
+load("CiteFuse_filtered.RData", verbose=T)
+```
+
+Generate UMAP through the ```uwot``` package.
+```{r}
+set.seed(2019)
+SNF_umap <- uwot::umap(fusedMatrix_CiteFuse)
+
+dftoPlot <- 
+    data.frame(
+        UMAP1 = SNF_umap[, 1],
+        UMAP2 = SNF_umap[, 2]
+    )
+```
+
+# Plot UMAP of the full dataset
+```{r plot_full, fig.cap="UMAP of the full human PBMC CITE-seq dataset."}
+gg.full <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, color = as.factor(CiteFuse_cluster_labels))) +
+    geom_point(alpha = 0.5) +
+    scale_color_manual(values = annotation_colors$W_colors) +
+    theme_bw() +
+    theme(aspect.ratio = 1, legend.position = "bottom") 
+
+gg.full
+
+gg.full %>% ggsave(filename="Figure2c.pdf", width=5, height=5.5)
+```
+
+
+# Plot UMAP of CD4+ T-cells highlighted by clustering output from different data modalities
+```{r plot_modality, fig.cap="UMAP of CD4+ T-cells highlighted by clusters."}
+gg.CD4_Tcells.CiteFuse <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, color = as.factor(CiteFuse_cluster_labels))) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_manual(values = annotation_colors$W_colors) +
+    theme_bw() +
+    ggtitle("CiteFuse") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+gg.CD4_Tcells.ADT <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, color = as.factor(ADT_cluster_labels))) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_manual(values = annotation_colors$W1_colors) +
+    theme_bw() +
+    ggtitle("ADT alone") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+gg.CD4_Tcells.RNA <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, color = as.factor(RNA_cluster_labels))) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_manual(values = annotation_colors$W2_colors) +
+    theme_bw() +
+    ggtitle("RNA alone") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+ggpubr::ggarrange(gg.CD4_Tcells.CiteFuse, 
+                  gg.CD4_Tcells.ADT, 
+                  gg.CD4_Tcells.RNA, ncol=3) 
+
+ggpubr::ggarrange(gg.CD4_Tcells.CiteFuse, 
+                  gg.CD4_Tcells.ADT, 
+                  gg.CD4_Tcells.RNA, ncol=3) %>% ggsave(filename="Figure2d.pdf", width=15, height=5.5)
+```
+
+# Plot UMAP of CD4+ T-cells highlighted by different marker genes
+
+```{r}
+memory.markers <- c("hg19_S100A4", "hg19_CRIP1", "hg19_AHNAK")
+naive.markers <- c("hg19_TCF", "hg19_ID3", "hg19_CCR7", "hg19_SELL")
+DR.markers <- c("hg19_GNLY", "hg19_GZMB",  "hg19_PRF1", "hg19_GZMA", "hg19_NKG7", "hg19_HLA-DRB1", "hg19_HLA-DPA1")
+```
+
+```{r plot_markers, fig.height=5, fig.width=20, fig.cap="UMAP of CD4+ T-cells highlighted by marker gene expression."}
+gg.CD4_Tcells.CD4 <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, colour = as.matrix(clr_adt_mat_control.filtered)["CD4",])) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_viridis_c() +
+    theme_bw() +
+    ggtitle("CD4 receptor expression") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+gg.CD4_Tcells.CD27 <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, colour = as.matrix(clr_adt_mat_control.filtered)["CD27",])) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_viridis_c() +
+    theme_bw() +
+    ggtitle("CD27 receptor expression") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+gg.CD4_Tcells.memory <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, 
+                         colour = colMeans(normalize.quantiles(logcounts(sce_control))[rownames(sce_control) %in% c(memory.markers),]))) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_viridis_c() +
+    theme_bw() +
+    ggtitle("Memory cell marker score") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+gg.CD4_Tcells.naive <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, 
+                         colour = colMeans(normalize.quantiles(logcounts(sce_control))[rownames(sce_control) %in% c(naive.markers),]))) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_viridis_c() +
+    theme_bw() +
+    ggtitle("Naive cell marker score") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+gg.CD4_Tcells.DR <- 
+    ggplot(dftoPlot, aes(x = UMAP1, y = UMAP2, 
+                         colour = colMeans(normalize.quantiles(logcounts(sce_control))[rownames(sce_control) %in% c(DR.markers),]))) +
+    geom_point(alpha = 0.5) +
+    coord_cartesian(xlim=c(8,15), ylim=c(-7,3)) + 
+    scale_color_viridis_c() +
+    theme_bw() +
+    ggtitle("CD27- DR+ T-cell marker score") + 
+    theme(aspect.ratio = 1, legend.position = "none") 
+
+ggpubr::ggarrange(gg.CD4_Tcells.CD4, 
+                  gg.CD4_Tcells.CD27,
+                  gg.CD4_Tcells.memory,
+                  gg.CD4_Tcells.naive,
+                  gg.CD4_Tcells.DR, 
+                  ncol=5) 
+
+ggpubr::ggarrange(gg.CD4_Tcells.CD4, 
+                  gg.CD4_Tcells.CD27,
+                  gg.CD4_Tcells.memory,
+                  gg.CD4_Tcells.naive,
+                  gg.CD4_Tcells.DR, 
+                  ncol=5)  %>% ggsave(filename="Figure2e.pdf", width=25, height=6)
+```
+

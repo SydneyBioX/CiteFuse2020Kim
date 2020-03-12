@@ -1,0 +1,273 @@
+---
+title: "ligand_receptor_scatterplot"
+author: "Hani Jieun Kim"
+date: "11/03/2020"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#  Ligand and receptor scatterplot
+
+The script reproduces the scatter plot in Figure 5d. It is shown in Figure \@ref(fig:plot).
+```{r load, echo=FALSE}
+setwd("/Users/hani/Dropbox (Sydney Uni)/Single Cell Reserach/SCProj-CITEseq/codes/Code/CodeRepository")
+
+library(ggplot2)
+library(ggthemes)
+library(reshape2)
+library(ggpubr)
+library(tidyverse)
+```
+
+Load expression matrices
+```{r}
+#read in log-transformed RNA expression matrix
+rna_log_norm <- readRDS("lr_interaction_rna_log_norm.rds")
+head(rna_log_norm[1:10,1:10])
+#read in log-transformed and normalised ADT count matrix
+adt_log_norm <- readRDS("lr_interaction_adt_log_norm.rds")
+head(adt_log_norm[1:10,1:10])
+```
+
+# Ligand-receptor predictions
+
+Load ligand-receptor pairs identified as significantly interacting by CiteFuse
+```{r}
+lr_pairs_CiteFuse <- readRDS("lr_pairs_CiteFuse.rds") # used `se_alt_exp = TRUE` to run `ligandReceptorTest`
+lr_pairs_RNA <- readRDS("lr_pairs_RNA.rds") # used `se_alt_exp = FALSE` to run `ligandReceptorTest`
+```
+
+Note that for each pair of interactions (cluster A_cluster B), cluster A is enriched by the ligand and cluster B is enriched by the receptor. 
+```{r}
+head(lr_pairs_CiteFuse)
+```
+
+# Categories of ligand-receptor interactions
+
+Function to substitute gene names with protein names and vice versa
+```{r}
+gsub_rna <- function(x) {
+  x <- gsub("SELL", "CD62L", x)
+  x <- gsub("ITGAM", "CD11b", x)
+  x <- gsub("FCGR3A", "CD16", x)
+  x <- gsub("FCGR3B", "CD16", x)
+  x <- gsub("PTPRC", "CD45", x)
+  x <- gsub("DPP4", "CD26 (Adenosine)", x)
+  return(x)
+}
+
+gsub_rna_backward <- function(x) {
+  x <- gsub("CD62L", "SELL", x)
+  x <- gsub("CD11b", "ITGAM", x)
+  x <- gsub("CD16", "FCGR3B", x)
+  x2 <- gsub("FCGR3B", "FCGR3A", x)
+  x <- unique(x, x2)
+  x <- gsub("CD45", "PTPRC", x)
+  x <- gsub("CD26 \\(Adenosine)", "DPP4", x)
+  return(x)
+}
+```
+
+Generate the three categories of ligand-receptor interactions (common, CiteFuse-specific, and RNA-specific)
+```{r}
+lr_pairs_RNA_alias <- lapply(lr_pairs_RNA, gsub_rna)
+
+interactions <- lapply(1:length(lr_pairs_RNA_alias), function(x) {
+  rna_tmp <- lr_pairs_RNA_alias[[x]]
+  adt_tmp <- lr_pairs_CiteFuse[[x]]
+  common <- intersect(rna_tmp, adt_tmp)
+  adt_specific <- adt_tmp[!adt_tmp %in% common]
+  rna_specific <- rna_tmp[!rna_tmp %in% common]
+  
+  c(RNA_specific = length(rna_specific), CiteFuse_specific = length(adt_specific), Common = length(common))
+})
+
+interactions <- do.call(rbind, interactions)
+rownames(interactions) <- names(lr_pairs_CiteFuse)
+head(interactions)
+```
+
+
+# Identify receptors by cluster
+
+Identify the receptors involved in a ligand-receptor interaction by cluster
+```{r}
+lr_pairs_Receptors <- lapply(1:length(lr_pairs_RNA_alias), function(x) {
+  
+  rna_tmp <- lr_pairs_RNA_alias[[x]]
+  adt_tmp <- lr_pairs_CiteFuse[[x]]
+  common <- intersect(rna_tmp, adt_tmp)
+  adt_specific <- adt_tmp[!adt_tmp %in% common]
+  rna_specific <- rna_tmp[!rna_tmp %in% common]
+  
+  res <- list(common = common, ADT = adt_specific, RNA = rna_specific)
+  res <- lapply(res, function(x) {
+    unique(sapply(strsplit(x, "_"), "[[", 2))
+  })
+  return(res)
+})
+
+#### extract receptors
+names(lr_pairs_Receptors) <- sapply(strsplit(names(lr_pairs_RNA_alias), "_"), "[[", 2) 
+
+#### group receptors by cluster
+lr_pairs_Receptors_byCluster <- lapply(1:16, function(i) {
+  tmp <- lr_pairs_Receptors[names(lr_pairs_Receptors) == i]
+  
+  common <- unique(unlist(lapply(tmp, "[[", "common")))
+  ADT <- unique(unlist(lapply(tmp, "[[", "ADT")))
+  RNA <- unique(unlist(lapply(tmp, "[[", "RNA")))
+  
+  res <- list(Common = common, CiteFuse_specific = ADT, RNA_specific = RNA)
+  return(res)
+})
+```
+
+# Calculate ranked expression of receptors by cluster
+
+Load cluster labels from CiteFuse
+```{r}
+load("cluster_labels.RData", verbose=T)
+```
+
+First calculate average expression of RNA and protein of receptors by cluster 
+```{r}
+receptor_meanExprs_RNA <- apply(rna_log_norm, 1, function(x) {
+  aggregate(x, list(CiteFuse_cluster_labels), mean)$x
+})
+
+receptor_meanExprs_ADT <- apply(adt_log_norm, 1, function(x) {
+  aggregate(x, list(CiteFuse_cluster_labels), mean)$x
+})
+```
+
+Second rank the average expression across the clusters
+```{r}
+receptor_rankedExprs_RNA  <- apply(receptor_meanExprs_RNA, 2, function(x){
+  rank(x, ties.method="random")
+})
+
+receptor_rankedExprs_ADT <- apply(receptor_meanExprs_ADT, 2, function(x){
+  rank(x, ties.method="random")
+})
+
+receptor_rankedExprs_RNA <- t(receptor_rankedExprs_RNA)
+receptor_rankedExprs_ADT <- t(receptor_rankedExprs_ADT)
+
+receptor_ranking_RNA <- receptor_ranking_ADT <- list()
+
+for (i in 1:length(lr_pairs_Receptors_byCluster)) {
+  
+  Common <- lr_pairs_Receptors_byCluster[[i]]$Common
+  CiteFuse_specific <- lr_pairs_Receptors_byCluster[[i]]$CiteFuse_specific
+  RNA_specific <- lr_pairs_Receptors_byCluster[[i]]$RNA_specific
+  
+  Common.RNA <- receptor_rankedExprs_RNA[gsub_rna_backward(Common), i]
+  CiteFuse_specific.RNA <- receptor_rankedExprs_RNA[gsub_rna_backward(CiteFuse_specific), i]
+  RNA_specific.RNA <- receptor_rankedExprs_RNA[gsub_rna_backward(RNA_specific), i]
+  
+  Common.ADT <- receptor_rankedExprs_ADT[Common, i]
+  CiteFuse_specific.ADT <- receptor_rankedExprs_ADT[CiteFuse_specific, i]
+  RNA_specific.ADT <- receptor_rankedExprs_ADT[RNA_specific, i]
+  
+  
+  receptor_ranking_RNA[[i]] <- list(RNA_specific = RNA_specific.RNA,
+                                    CiteFuse_specific = CiteFuse_specific.RNA,
+                                    Common = Common.RNA)
+  
+  receptor_ranking_ADT[[i]] <- list(RNA_specific = RNA_specific.ADT,
+                                    CiteFuse_specific = CiteFuse_specific.ADT,
+                                    Common = Common.ADT)
+}
+
+RNA_specific.RNA <- unlist(lapply(receptor_ranking_RNA, "[[", "RNA_specific"))
+CiteFuse_specific.RNA <- unlist(lapply(receptor_ranking_RNA, "[[", "CiteFuse_specific"))
+Common.RNA <- unlist(lapply(receptor_ranking_RNA, "[[", "Common"))
+
+RNA_specific.ADT <- unlist(lapply(receptor_ranking_ADT, "[[", "RNA_specific"))
+CiteFuse_specific.ADT <- unlist(lapply(receptor_ranking_ADT, "[[", "CiteFuse_specific"))
+Common.ADT <- unlist(lapply(receptor_ranking_ADT, "[[", "Common"))
+```
+
+# Plot of relative ranking of RNA versus protein expression of the receptors
+Geneate a scatter of RNA and protein expression of receptors ranked across the clusters. Scatter plot is generated for each category of receptors in Figure \@ref(fig:plot))
+```{r}
+
+pdf(file="Figure5d.pdf", width=12, height=5)
+par(mfrow=c(1,3))
+plot(RNA_specific.ADT, RNA_specific.RNA, 
+     col="#B3DE69", 
+     pch=19, 
+     xlim=c(1,16), ylim=c(1,16),
+     xlab="Relative ranking of protein \nexpression across clusters",
+     ylab="Relative ranking of RNA expression across clusters",
+     main="RNA-specific")
+abline(lm(RNA_specific.RNA~RNA_specific.ADT), col="#B3DE69", lty="dotted", lwd=2)
+plot(CiteFuse_specific.ADT, CiteFuse_specific.RNA, 
+     col="#FDB462", 
+     pch=19, 
+     xlim=c(1,16), ylim=c(1,16),
+     xlab="Relative ranking of protein \nexpression across clusters",
+     ylab="Relative ranking of RNA expression across clusters",
+     main="CiteFuse_specific")
+abline(lm(CiteFuse_specific.RNA~CiteFuse_specific.ADT), col="#FDB462", lty="dotted", lwd=2)
+plot(Common.ADT, Common.RNA, 
+     col="#FCCDE5", 
+     pch=19, 
+     xlab="Relative ranking of protein \nexpression across clusters",
+     ylab="Relative ranking of RNA expression across clusters",
+     xlim=c(1,16), ylim=c(1,16),
+     main="Common")
+abline(lm(Common.RNA~Common.ADT), col="#FCCDE5", lty="dotted", lwd=2)
+dev.off()
+```
+
+```{r plot, fig.cap="Relative ranking of RNA vs protein expression of receptors across clusters", fig.height=5, fig.width=10}
+
+par(mfrow=c(1,3))
+plot(RNA_specific.ADT, RNA_specific.RNA, 
+     col="#B3DE69", 
+     pch=19, 
+     xlim=c(1,16), ylim=c(1,16),
+     xlab="Relative ranking of protein \nexpression across clusters",
+     ylab="Relative ranking of RNA expression across clusters",
+     main="RNA-specific")
+abline(lm(RNA_specific.RNA~RNA_specific.ADT), col="#B3DE69", lty="dotted", lwd=2)
+plot(CiteFuse_specific.ADT, CiteFuse_specific.RNA, 
+     col="#FDB462", 
+     pch=19, 
+     xlim=c(1,16), ylim=c(1,16),
+     xlab="Relative ranking of protein \nexpression across clusters",
+     ylab="Relative ranking of RNA expression across clusters",
+     main="CiteFuse_specific")
+abline(lm(CiteFuse_specific.RNA~CiteFuse_specific.ADT), col="#FDB462", lty="dotted", lwd=2)
+plot(Common.ADT, Common.RNA, 
+     col="#FCCDE5", 
+     pch=19, 
+     xlab="Relative ranking of protein \nexpression across clusters",
+     ylab="Relative ranking of RNA expression across clusters",
+     xlim=c(1,16), ylim=c(1,16),
+     main="Common")
+abline(lm(Common.RNA~Common.ADT), col="#FCCDE5", lty="dotted", lwd=2)
+
+```
+
+Assess correlation between RNA and protein expression of receptors by cateory
+```{r}
+cor.test(RNA_specific.ADT, RNA_specific.RNA)
+cor.test(CiteFuse_specific.ADT, CiteFuse_specific.RNA)
+cor.test(Common.ADT, Common.RNA)
+```
+
+
+#Session Info
+```{r sessinf}
+sessionInfo()
+```

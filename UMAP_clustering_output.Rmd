@@ -1,0 +1,149 @@
+---
+title: "UMAP_clustering_ouput"
+author: "Hani Jieun Kim"
+date: "11/03/2020"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# UMAP visualistion of clustering outputs by expression matrices filtered for doublets
+
+The script reproduces the UMAPs in Figure 4a. It is shown in Figure \@ref(fig:plot).
+```{r load, echo=FALSE}
+library(uwot)
+library(ggplot2)
+library(ggthemes)
+library(viridis)
+library(propr)
+library(igraph)
+```
+
+Load fused expression matrices, each filtered for doublets by using different doublet detection algorithms.
+```{r}
+setwd("/Users/hani/Dropbox (Sydney Uni)/Single Cell Reserach/SCProj-CITEseq/codes/Code/CodeRepository")
+
+load("fusedMatrix_CiteFuse.RData", verbose=T)
+load("fusedMatrix_HTODemux.RData", verbose=T)
+load("fusedMatrix_Scrublet.RData", verbose=T)
+load("fusedMatrix_Unfiltered.RData", verbose=T)
+load("fusedMatrix_DoubletFinder.RData", verbose=T)
+
+load("annotation_colors.Rdata", verbose=T)
+load("cluster_labels.RData", verbose = T)
+```
+
+# Generate UMAPs
+```{r}
+runUMAP <- function(fusedMatrix) {
+    
+    set.seed(2019)
+  
+    fusedMatrix_umap <- uwot::umap(fusedMatrix)
+    
+    fusedMatrix_umap_toPlot <- data.frame(
+        UMAP1 = fusedMatrix_umap[, 1],
+        UMAP2 = fusedMatrix_umap[, 2]
+    )
+    
+    return(fusedMatrix_umap_toPlot)
+}
+
+#fusedMatrix_toPlot_Unfiltered <- runUMAP(fusedMatrix_Unfiltered)
+#fusedMatrix_toPlot_CiteFuse <- runUMAP(fusedMatrix_CiteFuse)
+#fusedMatrix_toPlot_Scrublet <- runUMAP(fusedMatrix_Scrublet)
+#fusedMatrix_toPlot_HTODemux <- runUMAP(fusedMatrix_HTODemux)
+#fusedMatrix_toPlot_DoubletFinder <- runUMAP(fusedMatrix_doubletFinder)
+
+#save(fusedMatrix_toPlot_Unfiltered, 
+     #fusedMatrix_toPlot_CiteFuse,
+     #fusedMatrix_toPlot_Scrublet,
+     #fusedMatrix_toPlot_HTODemux,
+     #fusedMatrix_toPlot_DoubletFinder,
+     #file="fusedMatrix_toPlot_umap0.1.4.RData")
+
+load("fusedMatrix_toPlot_umap0.1.4.RData", verbose = T)
+```
+# Clustering with CiteFuse
+
+Generate 16 clusters with spectral clustering from each similarity matrix.
+```{r}
+source("functions.R")
+
+set.seed(2019)
+system.time(clusters_Unfiltered <- spectralClustering(fusedMatrix_Unfiltered, K = 16, kernel = T))
+system.time(clusters_Scrublet <- spectralClustering(fusedMatrix_Scrublet, K = 16))
+system.time(clusters_HTODemux <- spectralClustering(fusedMatrix_HTODemux, K = 16))
+system.time(clusters_DoubletFinder <- spectralClustering(fusedMatrix_doubletFinder, K = 16))
+```
+
+# Plot UMAP of fused matrix filtered by different filtering methods
+```{r plot, fig.cap="UMAP of doublet filtering clustering output", fig.height=5, fig.width=20}
+gg.UMAP_unfiltered <- ggplot(fusedMatrix_toPlot_Unfiltered, 
+                             aes(x = UMAP1, y = UMAP2, col = as.factor(clusters_Unfiltered$labels))) +
+  geom_point(alpha=0.5) +
+  theme_classic() +
+  scale_fill_tableau(palette = "Tableau 20") +
+  theme(aspect.ratio = 1,  legend.position = "bottom") +
+  labs(title = "Unfiltered")
+
+gg.UMAP_HTODemux <- ggplot(fusedMatrix_toPlot_HTODemux, 
+                           aes(x = UMAP1, y = UMAP2, col = as.factor(clusters_HTODemux$labels))) +
+  geom_point(alpha=0.5) +
+  theme_classic() +
+  scale_color_manual(values = annotation_colors$W2_colors) +
+  theme(aspect.ratio = 1,  legend.position = "bottom") +
+  labs(title = "HTODemux")
+
+gg.UMAP_Scrublet <- ggplot(fusedMatrix_toPlot_Scrublet, 
+                           aes(x = UMAP1, y = UMAP2, col = as.factor(clusters_Scrublet$labels))) +
+  geom_point(alpha=0.5) +
+  theme_classic() +
+  scale_color_manual(values = annotation_colors$W1_colors) +
+  theme(aspect.ratio = 1,  legend.position = "bottom") +
+  labs(title = "Scrublet")
+
+gg.UMAP_DoubletFinder <- ggplot(fusedMatrix_toPlot_DoubletFinder, 
+                                aes(x = UMAP1, y = UMAP2, col = as.factor(clusters_DoubletFinder$labels))) +
+  geom_point(alpha=0.5) +
+  theme_classic() +
+  scale_fill_tableau(palette = "Tableau 20") +
+  theme(aspect.ratio = 1,  legend.position = "bottom") +
+  labs(title = "DoubletFinder")
+
+gg.UMAP_CiteFuse <- ggplot(fusedMatrix_toPlot_CiteFuse, 
+                           aes(x = UMAP1, y = UMAP2, col = as.factor(CiteFuse_cluster_labels))) +
+  geom_point(alpha=0.5) +
+  theme_classic() +
+  scale_color_manual(values = annotation_colors$W_colors) +
+  theme(aspect.ratio = 1,  legend.position = "bottom") +
+  labs(title = "CiteFuse")
+
+ggpubr::ggarrange(gg.UMAP_unfiltered,
+                  gg.UMAP_HTODemux,
+                  gg.UMAP_Scrublet,
+                  gg.UMAP_DoubletFinder,
+                  gg.UMAP_CiteFuse,
+                  ncol=5,
+                  common.legend = F)
+
+
+ggpubr::ggarrange(gg.UMAP_unfiltered,
+                  gg.UMAP_HTODemux,
+                  gg.UMAP_Scrublet,
+                  gg.UMAP_DoubletFinder,
+                  gg.UMAP_CiteFuse,
+                  ncol=5,
+                  legend="bottom") %>% ggsave(filename="Figure4a.pdf", width = 20, height = 5)
+```
+
+#Session Info
+```{r sessinf}
+sessionInfo()
+```

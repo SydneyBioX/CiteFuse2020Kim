@@ -1,0 +1,260 @@
+---
+title: "purity_plot"
+author: "Hani Jieun Kim"
+date: "11/03/2020"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#  Purity plot 
+
+The script reproduces the purity plot in Figure 4b. It is shown in Figure \@ref(fig:plot).
+```{r load, echo=FALSE}
+
+setwd("/Users/hani/Dropbox (Sydney Uni)/Single Cell Reserach/SCProj-CITEseq/codes/Code/CodeRepository")
+
+library(ggplot2)
+library(ggthemes)
+library(reshape2)
+library(ggpubr)
+library(tidyverse)
+library(mixtools)
+source("functions.R")
+
+```
+
+# Mixture modelling for CD4 and CD8 populations
+
+Fit a mixture model on CD4/CD8 and CD11c expression and calculate threshold. 
+```{r}
+load("doublet_labels.RData", verbose=T)
+load("Unfiltered.RData", verbose=T)
+
+
+
+CD4_pass_labels <- CD8_pass_labels <- list()
+
+
+
+for (i in 1:length(doublet.labels)) {
+  
+  adt_count <- adt_control[,doublet.labels[[i]] == FALSE]
+  adt_logcount <- log(adt_count + 1)
+  logcount_CD4 <- adt_logcount[rownames(adt_logcount) %in% c("CD4","CD11c"),]
+  logcount_CD8 <- adt_logcount[rownames(adt_logcount) %in% c("CD8","CD11c"),]
+  
+  mixmdl_CD4 <- list()
+  par(mfrow = c(2,2))
+  for (gene in 1:nrow(logcount_CD4)) {
+    mixmdl_CD4[[gene]] <- try(mixtools::normalmixEM(logcount_CD4[gene,][logcount_CD4[gene,]>0], 
+                                                    fast = T, maxrestarts = 1000,
+                                                    k = 2, maxit = 10000,
+                                                    mu = c(0, 8),
+                                                    ECM = TRUE, verb = F),
+                              silent = T)
+    plot(mixmdl_CD4[[gene]], whichplots = 2)
+  }
+  
+  CD4_threshold <- lapply(mixmdl_CD4, getThreshold)
+  names(CD4_threshold) <- NULL
+  CD4_threshold <- unlist(CD4_threshold)
+  
+  print(paste0("CD4 threshold for ", names(doublet.labels)[[i]], "-filtered matrix"))
+  print(CD4_threshold)
+  
+  CD4_pass <- sapply(1:nrow(logcount_CD4), function(x) {
+    logcount_CD4[x,] > CD4_threshold[x]
+  })
+  table(rowSums(CD4_pass))
+  colnames(CD4_pass) <- rownames(logcount_CD4)
+  
+  CD4_pass_labels[[i]] <- 
+    
+    apply(CD4_pass, 1, function(x) {
+      if (sum(x) == 0) {
+        "negative"
+      } else if (sum(x) == 1) {
+        "CD4"
+      } else {
+        "negative"
+      }
+    })
+  
+  mixmdl_CD8 <- list()
+  par(mfrow = c(2,2))
+  for (gene in 1:nrow(logcount_CD8)) {
+    mixmdl_CD8[[gene]] <- try(mixtools::normalmixEM(logcount_CD8[gene,][logcount_CD8[gene,]>0], 
+                                                    fast = T, maxrestarts = 1000,
+                                                    k = 2, maxit = 10000,
+                                                    mu = c(0, 8),
+                                                    ECM = TRUE, verb = F),
+                              silent = T)
+    plot(mixmdl_CD8[[gene]], whichplots = 2)
+  }
+  
+  CD8_threshold <- lapply(mixmdl_CD8, getThreshold)
+  names(CD8_threshold) <- NULL
+  CD8_threshold <- unlist(CD8_threshold)
+  
+  print(paste0("CD8 threshold for ", names(doublet.labels)[[i]], "-filtered matrix"))
+  print(CD8_threshold)
+  
+  CD8_pass <- sapply(1:nrow(logcount_CD8), function(x) {
+    logcount_CD8[x,] > CD8_threshold[x]
+  })
+  table(rowSums(CD8_pass))
+  colnames(CD8_pass) <- rownames(logcount_CD8)
+  
+  CD8_pass_labels[[i]] <- 
+    
+    sapply(CD8_pass[,2], function(x) {
+      if (sum(x) == 0) {
+        "negative"
+      } else if (sum(x) == 1) {
+        "CD8"
+      } else {
+        "negative"
+      }
+    })
+  
+}
+```
+
+Use mixture model to determine CD4 and CD8 positive cells for the five dataset, each filtered using a different doublet detection method.
+```{r}
+lapply(CD4_pass_labels, table)
+lapply(CD8_pass_labels, table)
+```
+
+# Calculate purity score
+
+Calculate the purity of a cluster for either CD4 or CD8 T-cells. 
+```{r}
+load("cluster_labels_doubletfiltered.RData", verbose = T)
+load("annotation_colors.RData")
+
+CD4clusterPurity <- function(clusters, labels) {
+  sapply(1:16, function(x) {
+    
+    max(table(clusters,labels)[x,"CD4"]) / sum(table(clusters,labels)[x,]) 
+    
+    })
+  
+}
+
+CD8clusterPurity <- function(clusters, labels) {
+  sapply(1:16, function(x) {
+    max(table(clusters,labels)[x,"CD8"]) / sum(table(clusters,labels)[x,]) })
+}
+
+
+CD4purityScore <- lapply(1:5, function(x) {
+  CD4clusterPurity(cluster_labels[[x]], CD4_pass_labels[[x]])
+})
+
+CD8purityScore <- lapply(1:5, function(x) {
+  CD8clusterPurity(cluster_labels[[x]], CD8_pass_labels[[x]])
+})
+
+
+
+CD4_dat <- do.call(cbind, CD4purityScore)
+rownames(CD4_dat) <- c(1:16)
+CD4_dat<- reshape2::melt(CD4_dat)
+colnames(CD4_dat) <- c("cluster", "method", "purity")
+
+CD8_dat <- do.call(cbind, CD8purityScore)
+rownames(CD8_dat) <- c(1:16)
+CD8_dat<- reshape2::melt(CD8_dat)
+colnames(CD8_dat) <- c("cluster", "method", "purity")
+
+combined <- cbind(CD4_dat, CD8_dat[,3])
+colnames(combined) <- c("cluster", "method", "purity_CD4", "purity_CD8")
+
+combined$method <- as.factor(combined$method)
+combined$cluster <- as.factor(combined$cluster)
+```
+
+
+
+```{r plot, fig.cap="Purity scores of CD8+ T cells against CD4+ T-cells", fig.height=5, fig.width=20}
+
+purity.unfiltered <- ggplot(combined[combined$method == 1,], 
+                            aes(x=purity_CD4, y=purity_CD8, col=cluster)) +
+  geom_point(size=4) +
+  geom_hline(yintercept = 0.1, col="red", lty="dotted", lwd=1) + 
+  geom_vline(xintercept = 0.08, col="red", lty="dotted", lwd=1) + 
+  geom_text(aes(label=cluster),hjust=2, vjust=0)+
+  scale_fill_tableau(palette = "Tableau 20") +
+  theme_classic() +
+  ggtitle("Unfiltered") + 
+  theme(aspect.ratio = 1) 
+
+purity.CiteFuse <- ggplot(combined[combined$method == 2,], 
+                          aes(x=purity_CD4, y=purity_CD8, col=cluster)) +
+  geom_point(size=4) +
+  geom_hline(yintercept = 0.1, col="red", lty="dotted", lwd=1) + 
+  geom_vline(xintercept = 0.08, col="red", lty="dotted", lwd=1) + 
+  geom_text(aes(label=cluster),hjust=2, vjust=0)+
+  scale_color_manual(values = annotation_colors$W_colors) +
+  theme_classic() +
+  ggtitle("CiteFuse") + 
+  theme(aspect.ratio = 1) 
+
+purity.Scrublet <- ggplot(combined[combined$method == 3,], 
+                          aes(x=purity_CD4, y=purity_CD8, col=cluster)) +
+  geom_point(size=4) +
+  geom_hline(yintercept = 0.1, col="red", lty="dotted", lwd=1) + 
+  geom_vline(xintercept = 0.08, col="red", lty="dotted", lwd=1) + 
+  geom_text(aes(label=cluster),hjust=2, vjust=0)+
+  scale_color_manual(values = annotation_colors$W1_colors) +
+  theme_classic() +
+  ggtitle("Scrublet") + 
+  theme(aspect.ratio = 1) 
+
+purity.HTODemux <- ggplot(combined[combined$method == 4,], 
+                          aes(x=purity_CD4, y=purity_CD8, col=cluster)) +
+  geom_point(size=4) +
+  geom_hline(yintercept = 0.1, col="red", lty="dotted", lwd=1) + 
+  geom_vline(xintercept = 0.08, col="red", lty="dotted", lwd=1) + 
+  geom_text(aes(label=cluster),hjust=2, vjust=0) +
+  scale_color_manual(values = annotation_colors$W2_colors) +
+  theme_classic() +
+  ggtitle("HTODemux") + 
+  theme(aspect.ratio = 1) 
+
+purity.DoubletFinder <- ggplot(combined[combined$method == 5,], 
+                               aes(x=purity_CD4, y=purity_CD8, col=cluster)) +
+  geom_point(size=4) +
+  geom_hline(yintercept = 0.1, col="red", lty="dotted", lwd=1) + 
+  geom_vline(xintercept = 0.08, col="red", lty="dotted", lwd=1) + 
+  geom_text(aes(label=cluster), hjust=2, vjust=0) +
+  scale_fill_tableau(palette = "Tableau 20") +
+  theme_classic() +
+  ggtitle("DoubletFinder") + 
+  theme(aspect.ratio = 1) 
+
+purity.combined <-  ggpubr::ggarrange(purity.unfiltered,
+          purity.HTODemux,
+          purity.Scrublet,
+          purity.DoubletFinder,
+          purity.CiteFuse,
+          ncol=5, 
+          legend="bottom",
+          common.legend = F)
+purity.combined 
+
+purity.combined %>% ggsave(filename = "Figure4b.pdf", height=5, width = 20) 
+```
+
+#Session Info
+```{r sessinf}
+sessionInfo()
+```

@@ -1,0 +1,108 @@
+---
+title: "ligand_receptor_interactions"
+author: "Hani Jieun Kim"
+date: "11/03/2020"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Ligand-receptor interactions
+
+The script reproduces the barplot in Figure 5a. It is shown in Figure \@ref(fig:plot)
+```{r load, echo=FALSE}
+setwd("/Users/hani/Dropbox (Sydney Uni)/Single Cell Reserach/SCProj-CITEseq/codes/Code/CodeRepository")
+
+library(ggplot2)
+library(ggthemes)
+library(reshape2)
+library(tidyverse)
+```
+
+Load expression matrices
+```{r}
+#read in log-transformed RNA expression matrix
+rna_log_norm <- readRDS("lr_interaction_rna_log_norm.rds")
+head(rna_log_norm[1:10,1:10])
+#read in log-transformed and normalised ADT count matrix
+adt_log_norm <- readRDS("lr_interaction_adt_log_norm.rds")
+head(adt_log_norm[1:10,1:10])
+```
+
+# Ligand-receptor predictions
+Load ligand-receptor pairs identified as significantly interacting by CiteFuse
+```{r}
+lr_pairs_CiteFuse <- readRDS("lr_pairs_CiteFuse.rds") # used `se_alt_exp = TRUE` to run `ligandReceptorTest`
+lr_pairs_RNA <- readRDS("lr_pairs_RNA.rds") # used `se_alt_exp = FALSE` to run `ligandReceptorTest`
+```
+
+Note that for each pair of interactions (cluster A_cluster B), cluster A is enriched by the ligand and cluster B is enriched by the receptor. 
+```{r}
+head(lr_pairs_CiteFuse)
+```
+
+# Categories of ligand-receptor interactions
+
+Function to substitute gene names with protein names
+```{r}
+gsub_rna <- function(x) {
+  x <- gsub("SELL", "CD62L", x)
+  x <- gsub("ITGAM", "CD11b", x)
+  x <- gsub("FCGR3A", "CD16", x)
+  x <- gsub("FCGR3B", "CD16", x)
+  x <- gsub("PTPRC", "CD45", x)
+  x <- gsub("DPP4", "CD26 (Adenosine)", x)
+  return(x)
+}
+```
+
+Generate the three categories of ligand-receptor interactions (common, CiteFuse-specific, and RNA-specific)
+```{r}
+lr_pairs_RNA_alias <- lapply(lr_pairs_RNA, gsub_rna)
+
+interactions <- lapply(1:length(lr_pairs_RNA_alias), function(x) {
+  rna_tmp <- lr_pairs_RNA_alias[[x]]
+  adt_tmp <- lr_pairs_CiteFuse[[x]]
+  common <- intersect(rna_tmp, adt_tmp)
+  adt_specific <- adt_tmp[!adt_tmp %in% common]
+  rna_specific <- rna_tmp[!rna_tmp %in% common]
+  
+  c(RNA_specific = length(rna_specific), CiteFuse_specific = length(adt_specific), Common = length(common))
+})
+
+interactions <- do.call(rbind, interactions)
+rownames(interactions) <- names(lr_pairs_CiteFuse)
+head(interactions)
+```
+
+# Barplot of total number of interactions by category
+The number of ligand-receptor interactions indentified in each category are shown in Figure \@ref(fig:plot)
+```{r plot, fig.cap="Number of interactions identified by each category."}
+df <- melt(interactions)
+colnames(df) <- c("LR_cluster", "Class", "Value")
+df$Receptor_cluster <- unlist(lapply(strsplit(as.character(df$LR_cluster),"_"), "[[", 2))
+df$Receptor_cluster <- factor(df$Receptor_cluster, levels = unique(df$Receptor_cluster))
+
+interactions.barplot <- ggplot(df, aes(x = Receptor_cluster, y = Value, fill = Class)) +
+    geom_bar(stat = "identity") +
+    ylab("Number of ligand-receptor interactions") +
+    xlab("Clusters") +
+    theme_bw() +
+    scale_fill_manual(values=c("#B3DE69","#FDB462", "#FCCDE5")) + 
+    theme(axis.text.x = element_text(angle = 90, size = 8))
+
+interactions.barplot 
+
+ggsave(interactions.barplot, file="Figure5b.pdf", width=10, height=10)
+```
+
+#Session Info
+```{r sessinf}
+sessionInfo()
+```

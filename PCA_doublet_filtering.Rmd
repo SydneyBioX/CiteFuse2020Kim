@@ -1,0 +1,111 @@
+---
+title: "PCA_doublet_filtering"
+author: "Hani Jieun Kim"
+date: "11/03/2020"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# PCA plot of HTO count 
+
+The script reproduces the PCA plot of HTO count in Figure 3c. It is shown in Figure \@ref(fig:plot).
+```{r load, echo=FALSE}
+setwd("/Users/hani/Dropbox (Sydney Uni)/Single Cell Reserach/SCProj-CITEseq/codes/Code/CodeRepository")
+
+library(ggplot2)
+library(ggthemes)
+library(reshape2)
+library(ggpubr)
+library(tidyverse)
+```
+
+Load the unfiltered HTO count matrix and perform log transformation
+```{r}
+load("Unfiltered.RData", verbose=T)
+HTO_logcounts <- log(hto_control+1)
+```
+
+# Filter doublets from the HTO count matrix
+
+Use doublet labels identified from CiteFuse, Scrublet, HTODemux, and DoubletFinder to filter the HTO count matrix.
+```{r}
+load("doublet_labels.Rdata", verbose = T)
+load("cellHashing_GT.RData", verbose = T)
+
+runPCA <- function(labels) {
+    
+    HTO_pca <- prcomp(as.matrix(t(HTO_logcounts[,labels==FALSE])), scale = T)
+    
+    HTO_pca_toPlot <- data.frame(
+        PCA1 = HTO_pca$x[, 1],
+        PCA2 = HTO_pca$x[, 2]
+    )
+    
+    return(HTO_pca_toPlot)
+}
+
+HTO_pca_toPlot <- lapply(doublet.labels, runPCA)
+```
+
+# Plot HTO count filtered by each doublet detection method
+```{r plot, fig.cap="PCA plot of HTO counts filtered for doublets.", fig.height=5, fig.width=20}
+gg.HTO_unfiltered <- ggplot(HTO_pca_toPlot[[1]], aes(x = PCA1, y = PCA2, col = cellHashinglabel[doublet.labels$Unfiltered == F])) +
+    geom_point(alpha=0.5) +
+    theme_classic() +
+    scale_color_manual(values=c("#80B1D3","#FDB462","#FB8072", "#8DD3C7","#B3DE69")) + 
+    theme(aspect.ratio = 1,  legend.position = "bottom") +
+    labs(title = "Unfiltered")
+gg.HTO_CiteFuse <- ggplot(HTO_pca_toPlot[[2]], aes(x = PCA1, y = PCA2, col = cellHashinglabel[doublet.labels$CiteFuse == F])) +
+    geom_point(alpha=0.5) +
+    theme_classic() +
+    scale_color_manual(values=c("#80B1D3","#FDB462","#FB8072", "#8DD3C7","#B3DE69")) + 
+    theme(aspect.ratio = 1,  legend.position = "bottom") +
+    labs(title = "CiteFuse")
+gg.HTO_Scrublet <- ggplot(HTO_pca_toPlot[[3]], aes(x = PCA1, y = PCA2, col = cellHashinglabel[doublet.labels$Scrublet == F])) +
+    geom_point(alpha=0.5) +
+    theme_classic() +
+    scale_color_manual(values=c("#80B1D3","#FDB462","#FB8072", "#8DD3C7","#B3DE69")) + 
+    theme(aspect.ratio = 1,  legend.position = "bottom") +
+    labs(title = "Scrublet")
+gg.HTO_HTODemux <- ggplot(HTO_pca_toPlot[[4]], aes(x = PCA1, y = PCA2, col = cellHashinglabel[doublet.labels$HTODemux == F])) +
+    geom_point(alpha=0.5) +
+    theme_classic() +
+    scale_color_manual(values=c("#80B1D3","#FDB462","#FB8072", "#8DD3C7","#B3DE69")) + 
+    theme(aspect.ratio = 1,  legend.position = "bottom") +
+    labs(title = "HTODemux")
+gg.HTO_DoubletFinder <- ggplot(HTO_pca_toPlot[[5]], aes(x = PCA1, y = PCA2, col = cellHashinglabel[doublet.labels$DoubletFinder == F])) +
+    geom_point(alpha=0.5) +
+    theme_classic() +
+    scale_color_manual(values=c("#80B1D3","#FDB462","#FB8072", "#8DD3C7","#B3DE69")) + 
+    theme(aspect.ratio = 1,  legend.position = "bottom") +
+    labs(title = "DoubletFinder")
+
+ggpubr::ggarrange(gg.HTO_unfiltered,
+                  gg.HTO_HTODemux,
+                  gg.HTO_Scrublet,
+                  gg.HTO_DoubletFinder,
+                  gg.HTO_CiteFuse,
+                  ncol=5,
+                  common.legend = T)
+
+
+ggpubr::ggarrange(gg.HTO_unfiltered,
+                  gg.HTO_HTODemux,
+                  gg.HTO_Scrublet,
+                  gg.HTO_DoubletFinder,
+                  gg.HTO_CiteFuse,
+                  ncol=5,
+                  common.legend = T) %>% ggsave(filename="Figure3c.pdf", width = 20, height = 5)
+```
+
+#Session Info
+```{r sessinf}
+sessionInfo()
+```

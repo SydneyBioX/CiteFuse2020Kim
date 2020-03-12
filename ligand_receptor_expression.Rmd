@@ -1,0 +1,212 @@
+---
+title: "ligand_receptor_expression"
+author: "Hani Jieun Kim"
+date: "11/03/2020"
+output: 
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#  Ligand and receptor expression
+
+The script reproduces the barplot in Figure 5c. It is shown in Figure \@ref(fig:plot).
+```{r load, echo=FALSE}
+setwd("/Users/hani/Dropbox (Sydney Uni)/Single Cell Reserach/SCProj-CITEseq/codes/Code/CodeRepository")
+
+library(ggplot2)
+library(ggthemes)
+library(reshape2)
+library(ggpubr)
+library(tidyverse)
+```
+
+Load expression matrices
+```{r}
+#read in log-transformed RNA expression matrix
+rna_log_norm <- readRDS("lr_interaction_rna_log_norm.rds")
+head(rna_log_norm[1:10,1:10])
+#read in log-transformed and normalised ADT count matrix
+adt_log_norm <- readRDS("lr_interaction_adt_log_norm.rds")
+head(adt_log_norm[1:10,1:10])
+```
+
+# Ligand-receptor predictions
+
+Load ligand-receptor pairs identified as significantly interacting by CiteFuse
+```{r}
+lr_pairs_CiteFuse <- readRDS("lr_pairs_CiteFuse.rds") # used `se_alt_exp = TRUE` to run `ligandReceptorTest`
+lr_pairs_RNA <- readRDS("lr_pairs_RNA.rds") # used `se_alt_exp = FALSE` to run `ligandReceptorTest`
+```
+
+Note that for each pair of interactions (cluster A_cluster B), cluster A is enriched by the ligand and cluster B is enriched by the receptor. 
+```{r}
+head(lr_pairs_CiteFuse)
+```
+
+# Categories of ligand-receptor interactions
+
+Function to substitute gene names with protein names and vice versa
+```{r}
+gsub_rna <- function(x) {
+  x <- gsub("SELL", "CD62L", x)
+  x <- gsub("ITGAM", "CD11b", x)
+  x <- gsub("FCGR3A", "CD16", x)
+  x <- gsub("FCGR3B", "CD16", x)
+  x <- gsub("PTPRC", "CD45", x)
+  x <- gsub("DPP4", "CD26 (Adenosine)", x)
+  return(x)
+}
+
+gsub_rna_backward <- function(x) {
+  x <- gsub("CD62L", "SELL", x)
+  x <- gsub("CD11b", "ITGAM", x)
+  x <- gsub("CD16", "FCGR3B", x)
+  x2 <- gsub("FCGR3B", "FCGR3A", x)
+  x <- unique(x, x2)
+  x <- gsub("CD45", "PTPRC", x)
+  x <- gsub("CD26 \\(Adenosine)", "DPP4", x)
+  #x <- gsub( "PD-1 \\(CD279)", "PDCD1", x)
+  return(x)
+}
+```
+
+Generate the three categories of ligand-receptor interactions (common, CiteFuse-specific, and RNA-specific)
+```{r}
+lr_pairs_RNA_alias <- lapply(lr_pairs_RNA, gsub_rna)
+
+interactions <- lapply(1:length(lr_pairs_RNA_alias), function(x) {
+  rna_tmp <- lr_pairs_RNA_alias[[x]]
+  adt_tmp <- lr_pairs_CiteFuse[[x]]
+  common <- intersect(rna_tmp, adt_tmp)
+  adt_specific <- adt_tmp[!adt_tmp %in% common]
+  rna_specific <- rna_tmp[!rna_tmp %in% common]
+  
+  c(RNA_specific = length(rna_specific), CiteFuse_specific = length(adt_specific), Common = length(common))
+})
+
+interactions <- do.call(rbind, interactions)
+rownames(interactions) <- names(lr_pairs_CiteFuse)
+head(interactions)
+```
+
+
+#  Identify receptors by cluster
+
+Identify the receptors involved in a ligand-receptor interaction by cluster
+```{r}
+lr_pairs_Receptors <- lapply(1:length(lr_pairs_RNA_alias), function(x) {
+  
+  rna_tmp <- lr_pairs_RNA_alias[[x]]
+  adt_tmp <- lr_pairs_CiteFuse[[x]]
+  common <- intersect(rna_tmp, adt_tmp)
+  adt_specific <- adt_tmp[!adt_tmp %in% common]
+  rna_specific <- rna_tmp[!rna_tmp %in% common]
+  
+  res <- list(common = common, ADT = adt_specific, RNA = rna_specific)
+  res <- lapply(res, function(x) {
+    unique(sapply(strsplit(x, "_"), "[[", 2))
+  })
+  return(res)
+})
+
+#### extract receptors
+names(lr_pairs_Receptors) <- sapply(strsplit(names(lr_pairs_RNA_alias), "_"), "[[", 2) 
+
+#### group receptors by cluster
+lr_pairs_Receptors_byCluster <- lapply(1:16, function(i) {
+  tmp <- lr_pairs_Receptors[names(lr_pairs_Receptors) == i]
+  
+  common <- unique(unlist(lapply(tmp, "[[", "common")))
+  ADT <- unique(unlist(lapply(tmp, "[[", "ADT")))
+  RNA <- unique(unlist(lapply(tmp, "[[", "RNA")))
+  
+  res <- list(Common = common, CiteFuse_specific = ADT, RNA_specific = RNA)
+  return(res)
+})
+```
+
+#  Boxplot to compare RNA and protein expression of receptors
+
+Load cluster labels from CiteFuse
+```{r}
+load("cluster_labels.RData", verbose=T)
+```
+
+Extract RNA and protein expression of receptors for each cluster
+```{r}
+receptor_expression_RNA <- receptor_expression_ADT <- list()
+
+for(i in 1:length(lr_pairs_Receptors_byCluster)) {
+  
+  Common <- lr_pairs_Receptors_byCluster[[i]]$Common
+  CiteFuse_specific <- lr_pairs_Receptors_byCluster[[i]]$CiteFuse_specific
+  RNA_specific <- lr_pairs_Receptors_byCluster[[i]]$RNA_specific
+  
+  
+  Common.RNA <- rna_log_norm[gsub_rna_backward(Common), CiteFuse_cluster_labels == i]
+  CiteFuse_specific.RNA <- rna_log_norm[gsub_rna_backward(CiteFuse_specific), CiteFuse_cluster_labels == i]
+  RNA_specific.RNA <- rna_log_norm[gsub_rna_backward(RNA_specific), CiteFuse_cluster_labels == i]
+  
+  
+  Common.ADT <- adt_log_norm[(Common), CiteFuse_cluster_labels == i]
+  CiteFuse_specific.ADT <- adt_log_norm[(CiteFuse_specific), CiteFuse_cluster_labels == i]
+  RNA_specific.ADT <- adt_log_norm[(RNA_specific), CiteFuse_cluster_labels == i]
+  
+  
+   res <- list(RNA_specific = c(RNA_specific.ADT),
+              CiteFuse_specific = c(CiteFuse_specific.ADT),
+              Common = c(Common.ADT))
+  
+  receptor_expression_ADT[[i]] <- melt(res)
+  receptor_expression_ADT[[i]][, 2] <- factor(as.character(receptor_expression_ADT[[i]][, 2]), levels = names(res))
+  colnames(receptor_expression_ADT[[i]]) <- c("value", "method")
+  
+  res <- list(RNA_specific = c(RNA_specific.RNA),
+              CiteFuse_specific = c(CiteFuse_specific.RNA),
+              Common = c(Common.RNA))
+  
+  receptor_expression_RNA[[i]] <- melt(res)
+  receptor_expression_RNA[[i]][, 2] <- factor(as.character(receptor_expression_RNA[[i]][, 2]), levels = names(res))
+  colnames(receptor_expression_RNA[[i]]) <- c("value", "method")
+  
+}
+
+
+exprs_ADT <- do.call(rbind, receptor_expression_ADT)
+exprs_RNA <- do.call(rbind, receptor_expression_RNA)
+```
+
+Geneate boxplot of RNA and ADT expression of receptors identified in a ligand-receptor interaction by category (Figure \@ref(fig:plot))
+```{r plot, fig.cap="Expression of RNA and ADT of receptors by category."}
+gg_ADT <- ggplot(exprs_ADT, aes(x = method, y = value, fill = method)) +
+    geom_boxplot(notch = F, notchwidth = 0.3, alpha = 0.8) + 
+    scale_x_discrete("method", breaks = factor(levels(exprs_ADT$method)), drop=FALSE) +
+    ylab("Normalised log expression") +
+    theme_classic() +
+    ggtitle("Expression of ADT") +
+    scale_fill_manual(values=(c("#B3DE69","#FDB462", "#FCCDE5"))) + 
+    theme(axis.text.x = element_blank())
+gg_RNA <- ggplot(exprs_RNA, aes(x = method, y = value, fill = method)) +
+    geom_boxplot(notch = F, notchwidth = 0.3, alpha = 0.8) + 
+    scale_x_discrete("method", breaks = factor(levels(exprs_RNA$method)), drop=FALSE) +
+    ylab("Normalised log expression") +
+    theme_classic() +
+    ggtitle("Expression of RNA") +
+    scale_fill_manual(values=(c("#B3DE69","#FDB462", "#FCCDE5"))) + 
+    theme(axis.text.x = element_blank())
+
+ggarrange(gg_RNA, gg_ADT, ncol=2, common.legend = T) 
+
+ggarrange(gg_RNA, gg_ADT, ncol=2, common.legend = T) %>% ggsave(file="Figure5c.pdf", width = 5, height = 5)
+```
+
+#Session Info
+```{r sessinf}
+sessionInfo()
+```
